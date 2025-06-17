@@ -286,6 +286,60 @@ class EnsembleModel:
         
         self.logger.info("Models initialized successfully")
         
+        # =============================
+        # Load additional configuration for signal generation
+        # =============================
+        try:
+            # Attempt to fetch strategy specific parameters for thresholds
+            strategy_params = config_loader.get_strategy_params()
+            self.signal_threshold = strategy_params.get('signal_threshold', 0.005)
+            self.logger.info(f"Signal threshold set to: {self.signal_threshold}")
+        except Exception as e:
+            # Fallback to a hard-coded default if config section is missing
+            self.logger.warning(f"Could not load strategy parameters from config. Using default signal_threshold. Error: {str(e)}")
+            self.signal_threshold = 0.005  # 0.5 % as reasonable default
+
+        # Signal and regime weights determine how different model components
+        # and market factors are combined when producing the final trade signal.
+        # They are optional in the config – provide sensible defaults if absent.
+        self.signal_weights = ising_params.get(
+            'signal_weights',
+            {'ensemble': 0.7, 'ising': 0.3}
+        )
+        # Ensure the weights sum to 1 to avoid unintended scaling
+        total_sw = sum(self.signal_weights.values())
+        if total_sw == 0:
+            # Avoid division by zero – reset to defaults
+            self.logger.warning("Signal weights in config sum to 0. Resetting to default (ensemble=0.7, ising=0.3)")
+            self.signal_weights = {'ensemble': 0.7, 'ising': 0.3}
+        else:
+            # Normalise so they always sum to 1
+            self.signal_weights = {k: v / total_sw for k, v in self.signal_weights.items()}
+        self.logger.info(f"Signal weights: {self.signal_weights}")
+
+        # Regime weights used inside _calculate_market_factors()
+        # Provide defaults covering all keys referenced in that method.
+        default_regime_weights = {
+            'volatility': 0.25,
+            'trend': 0.25,
+            'momentum': 0.25,
+            'regime': 0.25
+        }
+        self.regime_weights = ising_params.get('regime_weights', default_regime_weights)
+        # Ensure all required keys exist – fall back to default values where missing
+        for k, v in default_regime_weights.items():
+            if k not in self.regime_weights:
+                self.logger.warning(f"Regime weight for '{k}' missing – defaulting to {v}")
+                self.regime_weights[k] = v
+        # Normalise regime weights as well
+        total_rw = sum(self.regime_weights.values())
+        if total_rw == 0:
+            self.logger.warning("Regime weights sum to 0 – resetting to equal weights")
+            self.regime_weights = default_regime_weights
+            total_rw = sum(self.regime_weights.values())
+        self.regime_weights = {k: v / total_rw for k, v in self.regime_weights.items()}
+        self.logger.info(f"Regime weights: {self.regime_weights}")
+        
     def prepare_data(
         self,
         X: np.ndarray,
@@ -730,10 +784,10 @@ class EnsembleModel:
                 self.logger.error(traceback.format_exc())
                 ising_pred = np.zeros(len(data))
             
-            # Combine predictions
+            # Combine predictions using configurable weights. Use .get to avoid KeyErrors.
             combined_pred = (
-                self.model_weights['ensemble'] * ensemble_pred +
-                self.model_weights['ising'] * ising_pred
+                self.signal_weights.get('ensemble', 0.5) * ensemble_pred +
+                self.signal_weights.get('ising', 0.5) * ising_pred
             )
             self.logger.info(f"Combined prediction shape: {combined_pred.shape}")
             self.logger.info(f"Combined prediction values: {combined_pred}")
@@ -753,11 +807,17 @@ class EnsembleModel:
             self.logger.info(f"Base threshold: {base_threshold}")
             self.logger.info(f"Final threshold: {final_threshold}")
             
-            # Generate signal
+            # Convert latest prediction to a scalar for safe comparison
+            try:
+                latest_pred = float(np.squeeze(combined_pred[-1]))
+            except Exception:
+                self.logger.warning("Could not convert latest combined prediction to float – defaulting to 0.0")
+                latest_pred = 0.0
+
             signal = 0
-            if combined_pred[-1] > final_threshold:
+            if latest_pred > final_threshold:
                 signal = 1
-            elif combined_pred[-1] < -final_threshold:
+            elif latest_pred < -final_threshold:
                 signal = -1
                 
             self.logger.info(f"Generated signal: {signal}")
