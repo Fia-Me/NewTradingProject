@@ -1,0 +1,155 @@
+# Trading System Configuration
+
+# Data Collection Settings
+data_collection:
+  data_source: "yfinance"  # or "moomoo"
+  api:
+    key: "YOUR_API_KEY"
+    secret: "YOUR_API_SECRET"
+  symbols:
+    - "AAPL"
+    - "MSFT"
+    - "GOOGL"
+    - "AMZN"
+    - "META"
+  intervals:
+    - "1d"  # Daily
+    - "1h"  # Hourly
+    - "15m" # 15-minute
+  lookback_days: 365
+
+# Feature Engineering Parameters
+feature_engineering:
+  temporal_features:
+    windows: [5, 10, 20, 50, 100, 200]
+    include_returns: true
+    include_volatility: true
+    include_momentum: true
+    include_mean_reversion: true
+  
+  volatility_features:
+    garch_window: 20
+    realized_vol_window: 20
+    parkinson_vol_window: 20
+    garman_klass_vol_window: 20
+  
+  momentum_features:
+    rsi_periods: [14, 21, 50]
+    macd_params:
+      fast_period: 12
+      slow_period: 26
+      signal_period: 9
+    bollinger_bands:
+      window: 20
+      num_std: 2
+  
+  mean_reversion_features:
+    zscore_window: 20
+    hurst_window: 100
+    half_life_window: 20
+  
+  market_microstructure:
+    volume_ma_windows: [5, 10, 20]
+    vwap_window: 20
+    order_imbalance_window: 20
+
+# Model Parameters
+model:
+  ensemble:
+    lstm:
+      hidden_size: 64
+      num_layers: 2
+      dropout: 0.2
+      batch_size: 32
+      learning_rate: 0.001
+      epochs: 100
+    
+    transformer:
+      d_model: 64
+      nhead: 4
+      num_layers: 2
+      dim_feedforward: 256
+      dropout: 0.1
+      batch_size: 32
+      learning_rate: 0.001
+      epochs: 100
+    
+    xgboost:
+      max_depth: 6
+      learning_rate: 0.1
+      n_estimators: 100
+      subsample: 0.8
+      colsample_bytree: 0.8
+      min_child_weight: 1
+      gamma: 0
+      
+    ising:
+      temperature: 1.0
+      interaction_strength: 0.5
+      external_field: 0.1
+      simulation_steps: 1000
+      window_size: 20
+      regime_threshold: 0.5
+      signal_weights:
+        ensemble: 0.7
+        ising: 0.3
+      regime_weights:
+        volatility: 0.15
+        rsi: 0.15
+        macd: 0.15
+        momentum: 0.15
+        adx: 0.15
+        regime: 0.15
+        temperature: 0.10
+
+# Strategy Parameters
+strategy:
+  renaissance:
+    lookback_period: 252  # 1 year
+    prediction_horizon: 5  # 5 days
+    signal_threshold: 0.005  # 0.5% threshold (reduced from 2%)
+    position_size_limit: 0.15  # 15% of portfolio (increased from 2%)
+    min_holding_period: 1  # Minimum days to hold position
+    max_holding_period: 10  # Maximum days to hold position (reduced from 20)
+    rebalance_frequency: "1d"  # Daily rebalancing
+
+# Risk Management Parameters
+risk_management:
+  position_limits:
+    max_position_size: 0.15  # 15% of portfolio (increased from 5%)
+    max_sector_exposure: 0.30  # 30% per sector (increased from 20%)
+    max_leverage: 1.5  # 150% leverage
+  
+  risk_limits:
+    max_daily_loss: 0.02  # 2% daily loss limit
+    max_drawdown: 0.15  # 15% maximum drawdown
+    var_confidence: 0.99  # 99% VaR confidence level
+    var_window: 252  # 1 year for VaR calculation
+  
+  correlation:
+    max_correlation: 0.7  # Maximum correlation between positions
+    correlation_window: 60  # 60 days for correlation calculation
+
+# Backtesting Parameters
+backtesting:
+  initial_capital: 1000000  # $1M initial capital
+  transaction_cost: 0.001  # 0.1% transaction cost
+  slippage: 0.0005  # 0.05% slippage
+  risk_free_rate: 0.02  # 2% risk-free rate
+  benchmark: "SPY"  # S&P 500 ETF as benchmark
+
+# Performance Metrics
+performance_metrics:
+  target_annual_return: 0.15  # 15% target annual return
+  target_sharpe_ratio: 1.5  # Target Sharpe ratio (reduced from 2.0)
+  max_drawdown_limit: 0.15  # 15% maximum drawdown limit
+  min_win_rate: 0.45  # 45% minimum win rate (reduced from 55%)
+  min_profit_factor: 1.2  # Minimum profit factor (reduced from 1.5)
+
+# Logging Configuration
+logging:
+  level: "INFO"
+  format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+  file: "trading_system.log"
+  max_file_size: 10485760  # 10MB
+  backup_count: 5 
