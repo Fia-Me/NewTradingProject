@@ -99,7 +99,7 @@ def test_ising_model(data):
     try:
         # Create returns DataFrame with proper index
         returns = pd.DataFrame(index=data.index)
-        returns['close'] = data['close'].pct_change()
+        returns['returns'] = data['close'].pct_change()
         returns = returns.dropna()
         
         logger.info(f"Returns DataFrame shape: {returns.shape}")
@@ -126,7 +126,7 @@ def test_ising_model(data):
         regime = ising_model.calculate_market_regime(returns, window=20)
         logger.info(f"Market regime calculated: {regime}")
         
-        # Generate signals
+        # Generate signals - use only returns data, not features
         logger.info("Generating signals...")
         logger.info(f"Input returns shape: {returns.shape}")
         signals = ising_model.generate_signals(returns, window=20)
@@ -166,7 +166,7 @@ def test_model_training(features, data):
         logger.info("Feature statistics:")
         logger.info(features.describe())
         
-        # Initialize model with correct input size
+        # Initialize model with correct input size based on actual features
         input_size = len(features.columns)
         logger.info(f"Initializing EnsembleModel with input_size={input_size}")
         model = EnsembleModel(input_size=input_size)
@@ -224,10 +224,10 @@ def test_model_training(features, data):
             logger.error(traceback.format_exc())
             raise
             
-        # Test signal generation
+        # Test signal generation - pass the full feature data
         logger.info("Testing signal generation...")
         try:
-            signal = model.generate_signals(features.iloc[-1])
+            signal = model.generate_signals(features.iloc[-1:])  # Pass as DataFrame
             logger.info(f"Generated signal: {signal}")
         except Exception as e:
             logger.error(f"Error during signal generation: {str(e)}")

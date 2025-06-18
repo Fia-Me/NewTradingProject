@@ -361,7 +361,7 @@ class IsingModel:
         Generate trading signals using the Ising model.
         
         Args:
-            returns: DataFrame of asset returns
+            returns: DataFrame of asset returns or features
             window: Rolling window size for calculations
             
         Returns:
@@ -375,19 +375,39 @@ class IsingModel:
             if isinstance(returns, pd.Series):
                 returns = returns.to_frame()
             
-            # Calculate market regime
-            regime = self.calculate_market_regime(returns, window)
+            # Extract only the returns column if it exists, otherwise use the first column
+            if 'returns' in returns.columns:
+                returns_data = returns[['returns']].copy()
+                logger.info("Using 'returns' column for Ising model calculations")
+            else:
+                # Use the first column or create returns from close if available
+                if 'close' in returns.columns:
+                    returns_data = pd.DataFrame(index=returns.index)
+                    returns_data['returns'] = returns['close'].pct_change()
+                    logger.info("Created returns from 'close' column for Ising model calculations")
+                else:
+                    # Just use the first column and assume it's returns-like
+                    first_col = returns.columns[0]
+                    returns_data = returns[[first_col]].copy()
+                    returns_data.columns = ['returns']
+                    logger.info(f"Using first column '{first_col}' as returns for Ising model calculations")
             
-            # Extract the most recent return value
-            latest_returns = returns.iloc[-1].values
+            # Calculate market regime using only returns data
+            regime = self.calculate_market_regime(returns_data, window)
             
-            # If we have more features than assets, use only the first n_assets
-            if len(latest_returns) > self.n_assets:
+            # Extract the most recent return value - now should be size 1
+            latest_returns = returns_data.iloc[-1].values
+            
+            # Verify size matches n_assets
+            if len(latest_returns) != self.n_assets:
+                logger.warning(f"Latest returns size {len(latest_returns)} doesn't match n_assets {self.n_assets}, taking first {self.n_assets} values")
                 latest_returns = latest_returns[:self.n_assets]
-                logger.info(f"Using first {self.n_assets} features for signal generation")
             
             # Convert returns to binary states (-1 or 1)
             state = np.sign(latest_returns)
+            
+            # Handle zero returns (set to 1 by default)
+            state[state == 0] = 1
             
             # Calculate energy of current state
             energy = self.calculate_energy(state)

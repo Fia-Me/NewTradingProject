@@ -47,19 +47,6 @@ def main():
         logger.info(f"Collected data for {symbol}")
         logger.info(f"Data columns: {data.columns.tolist()}")
 
-        # Define required features
-        required_features = [
-            'open', 'high', 'low', 'close', 'volume',
-            'returns', 'volatility', 'rsi', 'macd', 'macd_signal',
-            'bb_upper', 'bb_middle', 'bb_lower', 'atr', 'obv',
-            'vwap', 'momentum', 'roc', 'williams_r', 'cci',
-            'stoch_k', 'stoch_d', 'adx', 'mfi', 'trix',
-            'aroon_up', 'aroon_down', 'ppo', 'roc_ma', 'mfi_ma',
-            'rsi_ma', 'macd_ma', 'bb_width', 'bb_pct', 'atr_ratio',
-            'volume_ma', 'price_ma', 'volatility_ma', 'momentum_ma',
-            'returns_ma', 'vwap_ma'
-        ]
-
         # Engineer features with configuration
         feature_engineer = FeatureEngineer(feature_params=config['feature_engineering'])
         features = feature_engineer.create_features(data)
@@ -71,20 +58,17 @@ def main():
         logger.info(f"Engineered features for {symbol}: {features.shape}")
         logger.info(f"Feature columns: {features.columns.tolist()}")
 
+        # Use the actual features created by FeatureEngineer instead of hardcoded list
+        actual_features = list(features.columns)
+        
         # Initialize ensemble model with the correct number of features
-        ensemble_model = EnsembleModel(input_size=len(required_features))
+        ensemble_model = EnsembleModel(input_size=len(actual_features))
 
         # Train the model
         logger.info("Starting model training...")
         
-        # Ensure all required features are present and in the correct order
-        for feature in required_features:
-            if feature not in features.columns:
-                logger.warning(f"Missing required feature: {feature}")
-                features.loc[:, feature] = 0.0
-        
-        # Select only the required features in the correct order
-        X = features[required_features].copy()
+        # Use the actual features (no need to add missing features)
+        X = features.copy()
         
         # Calculate 5-day future returns as target
         y = data['close'].pct_change(periods=5).shift(-5)
@@ -118,14 +102,6 @@ def main():
         # Prepare data for backtest
         backtest_data = data.copy()
         backtest_features = features.copy()
-        
-        # Ensure all required features are present in backtest data
-        for feature in required_features:
-            if feature not in backtest_features.columns:
-                backtest_features.loc[:, feature] = 0.0
-        
-        # Select only the required features for backtesting
-        backtest_features = backtest_features[required_features].copy()
         
         # Handle any NaN values in backtest data
         backtest_features = backtest_features.fillna(0)

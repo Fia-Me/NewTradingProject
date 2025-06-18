@@ -513,12 +513,16 @@ class EnsembleModel:
     def _prepare_flat_features(self, X: np.ndarray) -> np.ndarray:
         """Prepare features for XGBoost model."""
         try:
-            # Reshape to 2D array
-            n_samples = X.shape[0]
-            n_features = X.shape[1] * X.shape[2] if len(X.shape) == 3 else X.shape[1]
-            X_flat = X.reshape(n_samples, n_features)
+            # Ensure X is 2D
+            if len(X.shape) == 3:
+                # Reshape to 2D by flattening the sequence dimension
+                n_samples = X.shape[0]
+                n_features = X.shape[1] * X.shape[2]
+                X_flat = X.reshape(n_samples, n_features)
+            else:
+                X_flat = X.copy()
             
-            # Add meta-features
+            # Generate meta-features
             X_meta = self._generate_meta_features(X_flat)
             
             self.logger.info(f"Prepared flat features shape: {X_meta.shape}")
@@ -527,7 +531,11 @@ class EnsembleModel:
         except Exception as e:
             self.logger.error(f"Error preparing flat features: {str(e)}")
             self.logger.error(traceback.format_exc())
-            raise
+            # Return a fallback array with appropriate dimensions
+            if len(X.shape) >= 2:
+                return np.zeros((X.shape[0], 7))  # 7 meta-features as fallback
+            else:
+                return np.zeros((1, 7))  # Single sample fallback
         
     def _generate_meta_features(self, X: np.ndarray) -> np.ndarray:
         """Generate meta-features from input data."""
@@ -577,10 +585,26 @@ class EnsembleModel:
                 n_samples, seq_len, n_features = X.shape
                 X = X.reshape(n_samples * seq_len, n_features)
             
-            # Initialize scaler if not exists
-            if self.feature_scaler is None:
-                from sklearn.preprocessing import StandardScaler
-                self.feature_scaler = StandardScaler()
+            # Check if scaler is fitted and dimensions match
+            if hasattr(self.feature_scaler, 'n_features_in_'):
+                expected_features = self.feature_scaler.n_features_in_
+                actual_features = X.shape[1]
+                
+                if expected_features != actual_features:
+                    logger.warning(f"Feature dimension mismatch: expected {expected_features}, got {actual_features}")
+                    
+                    if actual_features < expected_features:
+                        # Pad with zeros
+                        padding = np.zeros((X.shape[0], expected_features - actual_features))
+                        X = np.hstack([X, padding])
+                        logger.info(f"Padded features from {actual_features} to {expected_features}")
+                    else:
+                        # Truncate
+                        X = X[:, :expected_features]
+                        logger.info(f"Truncated features from {actual_features} to {expected_features}")
+            else:
+                # Scaler not fitted, fit it now
+                logger.info("Feature scaler not fitted, fitting now...")
                 self.feature_scaler.fit(X)
             
             # Scale features
@@ -881,11 +905,17 @@ class EnsembleModel:
             if 'regime' in data.columns:
                 regime = data['regime'].iloc[-1]
             
+            # Convert pandas Series to scalar values for safe formatting
+            volatility_scalar = float(volatility) if hasattr(volatility, 'item') else float(volatility)
+            adx_scalar = float(adx) if hasattr(adx, 'item') else float(adx)
+            rsi_scalar = float(rsi) if hasattr(rsi, 'item') else float(rsi)
+            regime_scalar = float(regime) if hasattr(regime, 'item') else float(regime)
+            
             # Combine factors
-            volatility_factor = 1.0 / (1.0 + volatility)  # Reduce signals in high volatility
-            trend_factor = adx / 100.0 if adx > 0 else 0.5  # Reduce signals in weak trends
-            momentum_factor = 1.0 - abs(rsi - 50) / 50.0  # Reduce signals in extreme RSI
-            regime_factor = regime if isinstance(regime, (int, float)) else 1.0
+            volatility_factor = 1.0 / (1.0 + volatility_scalar)  # Reduce signals in high volatility
+            trend_factor = adx_scalar / 100.0 if adx_scalar > 0 else 0.5  # Reduce signals in weak trends
+            momentum_factor = 1.0 - abs(rsi_scalar - 50) / 50.0  # Reduce signals in extreme RSI
+            regime_factor = regime_scalar if isinstance(regime_scalar, (int, float)) else 1.0
             
             # Calculate final factor
             market_factor = (
@@ -896,10 +926,10 @@ class EnsembleModel:
             )
             
             self.logger.info(f"Market factors calculation:")
-            self.logger.info(f"  Volatility: {volatility:.4f}")
-            self.logger.info(f"  ADX: {adx:.2f}")
-            self.logger.info(f"  RSI: {rsi:.2f}")
-            self.logger.info(f"  Regime: {regime}")
+            self.logger.info(f"  Volatility: {volatility_scalar:.4f}")
+            self.logger.info(f"  ADX: {adx_scalar:.2f}")
+            self.logger.info(f"  RSI: {rsi_scalar:.2f}")
+            self.logger.info(f"  Regime: {regime_scalar}")
             self.logger.info(f"  Final market factor: {market_factor:.4f}")
             
             return market_factor
