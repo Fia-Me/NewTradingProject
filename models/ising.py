@@ -49,7 +49,17 @@ class IsingModel:
         
         # For single asset case
         if self.n_assets == 1:
-            energy = -self.external_field * state[0]
+            # Ensure state is a scalar for single asset
+            if isinstance(state, np.ndarray):
+                if len(state.shape) > 1:
+                    # Multi-dimensional array, flatten and take first element
+                    state_val = float(state.flatten()[0]) if state.size > 0 else 0.0
+                else:
+                    # 1D array, take first element safely
+                    state_val = float(state.item()) if state.size == 1 else float(state[0])
+            else:
+                state_val = float(state)
+            energy = -self.external_field * state_val
             return energy
             
         # For multiple assets case
@@ -156,23 +166,85 @@ class IsingModel:
         
         return regime_metrics
         
+    def _extract_returns_for_assets(self, returns: pd.DataFrame) -> np.ndarray:
+        """
+        Extract returns for the configured number of assets consistently.
+        
+        Args:
+            returns: DataFrame of returns (could have more columns than n_assets)
+            
+        Returns:
+            Array of returns with shape matching n_assets
+        """
+        try:
+            # If returns is a Series, convert to DataFrame
+            if isinstance(returns, pd.Series):
+                returns = returns.to_frame()
+            
+            # Get the most recent return values
+            latest_returns = returns.iloc[-1].values
+            
+            # Handle the case where we have more features than assets
+            if len(latest_returns) > self.n_assets:
+                if self.n_assets == 1:
+                    # For single asset, try to find 'close' or 'returns' column, or use first column
+                    if 'returns' in returns.columns:
+                        latest_returns = returns['returns'].iloc[-1:].values
+                    elif 'close' in returns.columns:
+                        latest_returns = returns['close'].pct_change().iloc[-1:].values
+                    else:
+                        latest_returns = latest_returns[:1]  # Use first feature
+                else:
+                    latest_returns = latest_returns[:self.n_assets]
+                    
+                logger.info(f"Extracted {len(latest_returns)} features for {self.n_assets} assets")
+            
+            # Ensure we have exactly n_assets values
+            if len(latest_returns) < self.n_assets:
+                # Pad with zeros if needed
+                padding = np.zeros(self.n_assets - len(latest_returns))
+                latest_returns = np.concatenate([latest_returns, padding])
+                logger.warning(f"Padded returns from {len(latest_returns)} to {self.n_assets} values")
+            
+            return latest_returns[:self.n_assets]
+            
+        except Exception as e:
+            logger.error(f"Error extracting returns for assets: {str(e)}")
+            # Return safe fallback
+            return np.zeros(self.n_assets)
+
     def _calculate_magnetization(self, returns: pd.DataFrame) -> float:
         """Calculate magnetization (average market state)."""
-        # Use only the most recent return value
-        state = np.sign(returns.iloc[-1].values)
-        return np.mean(state)
+        try:
+            # Use consistent asset extraction
+            asset_returns = self._extract_returns_for_assets(returns)
+            state = np.sign(asset_returns)
+            return float(np.mean(state))
+        except Exception as e:
+            logger.warning(f"Error calculating magnetization: {str(e)}")
+            return 0.0
         
     def _calculate_susceptibility(self, returns: pd.DataFrame) -> float:
         """Calculate susceptibility (market sensitivity to changes)."""
-        # Use only the most recent return value
-        magnetization = self._calculate_magnetization(returns)
-        return np.var(np.sign(returns.iloc[-1].values)) / self.temperature
+        try:
+            # Use consistent asset extraction
+            asset_returns = self._extract_returns_for_assets(returns)
+            state = np.sign(asset_returns)
+            return float(np.var(state) / self.temperature)
+        except Exception as e:
+            logger.warning(f"Error calculating susceptibility: {str(e)}")
+            return 0.0
         
     def _calculate_system_energy(self, returns: pd.DataFrame) -> float:
         """Calculate total system energy."""
-        # Use only the most recent return value
-        state = np.sign(returns.iloc[-1].values)
-        return self.calculate_energy(state)
+        try:
+            # Use consistent asset extraction
+            asset_returns = self._extract_returns_for_assets(returns)
+            state = np.sign(asset_returns)
+            return float(self.calculate_energy(state))
+        except Exception as e:
+            logger.warning(f"Error calculating system energy: {str(e)}")
+            return 0.0
         
     def _identify_regime_clusters(
         self,
@@ -180,59 +252,101 @@ class IsingModel:
         n_clusters: int = 3
     ) -> int:
         """Identify market regime clusters using K-means."""
-        # Input validation
-        if returns.empty:
-            raise ValueError("Input returns DataFrame is empty")
+        try:
+            # Input validation
+            if returns.empty:
+                raise ValueError("Input returns DataFrame is empty")
             
-        # Calculate features with proper NaN handling
-        features = []
-        
-        # Mean returns
-        mean_returns = returns.mean(axis=1)
-        logger.debug(f"Mean returns NaN count: {mean_returns.isna().sum()}")
-        features.append(mean_returns)
-        
-        # Standard deviation of returns
-        std_returns = returns.std(axis=1)
-        logger.debug(f"Std returns NaN count: {std_returns.isna().sum()}")
-        features.append(std_returns)
-        
-        # Rolling correlation with proper NaN handling
-        corr = returns.rolling(window=20, min_periods=1).corr()
-        if corr.isna().any().any():
-            logger.warning("NaN values found in correlation matrix")
-            # Fill NaN values in correlation matrix
-            corr = corr.fillna(0)  # Fill with 0 for no correlation
-        corr_mean = corr.mean(axis=1)
-        logger.debug(f"Correlation NaN count: {corr_mean.isna().sum()}")
-        features.append(corr_mean)
-        
-        # Stack features
-        features = np.column_stack(features)
-        
-        # Convert to DataFrame for easier handling
-        features_df = pd.DataFrame(features)
-        
-        # Handle NaN values using newer methods
-        features_df = features_df.ffill().bfill()  # Forward fill then backward fill
-        
-        # Additional check for any remaining NaN values
-        if features_df.isna().any().any():
-            logger.warning("NaN values remain after cleaning, filling with 0")
-            features_df = features_df.fillna(0)
+            # Calculate features with proper shape handling
+            features_list = []
             
-        # Convert back to numpy array
-        features = features_df.values
-        
-        # Verify no NaN values remain
-        if np.isnan(features).any():
-            raise ValueError("NaN values remain in features after cleaning")
+            # Mean returns
+            mean_returns = returns.mean(axis=1)
+            if len(mean_returns) == 0:
+                logger.warning("Empty mean returns, using default value")
+                mean_returns = pd.Series([0.0])
+            features_list.append(mean_returns.fillna(0).values.reshape(-1, 1))
             
-        # Perform clustering
-        kmeans = KMeans(n_clusters=n_clusters, random_state=42)
-        clusters = kmeans.fit_predict(features)
-        
-        return clusters[-1]
+            # Standard deviation of returns  
+            std_returns = returns.std(axis=1)
+            if len(std_returns) == 0:
+                logger.warning("Empty std returns, using default value")
+                std_returns = pd.Series([0.0])
+            features_list.append(std_returns.fillna(0).values.reshape(-1, 1))
+            
+            # Calculate rolling correlation with proper handling
+            try:
+                # Use only the window size available
+                available_window = min(20, len(returns))
+                if available_window < 2:
+                    logger.warning("Insufficient data for correlation calculation")
+                    corr_mean = pd.Series([0.0])
+                else:
+                    corr = returns.rolling(window=available_window, min_periods=1).corr()
+                    if corr.isna().any().any():
+                        logger.warning("NaN values found in correlation matrix, filling with 0")
+                        corr = corr.fillna(0)
+                    
+                    # Calculate mean correlation, handling potential issues
+                    corr_mean = corr.mean(axis=1)
+                    if corr_mean.empty:
+                        corr_mean = pd.Series([0.0])
+                        
+                features_list.append(corr_mean.fillna(0).values.reshape(-1, 1))
+                
+            except Exception as e:
+                logger.warning(f"Error calculating correlation: {str(e)}, using default")
+                corr_mean = pd.Series([0.0] * len(mean_returns))
+                features_list.append(corr_mean.values.reshape(-1, 1))
+            
+            # Ensure all features have the same length
+            min_length = min(len(f) for f in features_list)
+            if min_length == 0:
+                logger.warning("All features have zero length, using defaults")
+                return 0
+                
+            # Trim all features to same length
+            features_list = [f[:min_length] for f in features_list]
+            
+            # Stack features horizontally
+            try:
+                features = np.hstack(features_list)
+                logger.info(f"Stacked features shape: {features.shape}")
+            except Exception as e:
+                logger.error(f"Error stacking features: {str(e)}")
+                logger.error(f"Feature shapes: {[f.shape for f in features_list]}")
+                # Return default cluster
+                return 0
+            
+            # Handle edge cases
+            if features.size == 0:
+                logger.warning("Empty features array, returning default cluster")
+                return 0
+            
+            if len(features) < n_clusters:
+                logger.warning(f"Not enough samples ({len(features)}) for {n_clusters} clusters")
+                n_clusters = max(1, len(features))
+            
+            # Handle single sample case
+            if len(features) == 1:
+                return 0
+            
+            # Ensure no NaN or inf values
+            features = np.nan_to_num(features, nan=0.0, posinf=1.0, neginf=-1.0)
+            
+            # Perform clustering with error handling
+            try:
+                kmeans = KMeans(n_clusters=n_clusters, random_state=42, n_init=10)
+                clusters = kmeans.fit_predict(features)
+                return int(clusters[-1])
+            except Exception as e:
+                logger.warning(f"Clustering failed: {str(e)}, returning default cluster")
+                return 0
+                
+        except Exception as e:
+            logger.error(f"Error in regime cluster identification: {str(e)}")
+            logger.error(traceback.format_exc())
+            return 0
         
     def _calculate_regime_stability(self, returns: pd.DataFrame) -> float:
         """Calculate the stability of the current market regime."""
@@ -378,37 +492,44 @@ class IsingModel:
             # Calculate market regime
             regime = self.calculate_market_regime(returns, window)
             
-            # Extract the most recent return value
-            latest_returns = returns.iloc[-1].values
-            
-            # If we have more features than assets, use only the first n_assets
-            if len(latest_returns) > self.n_assets:
-                latest_returns = latest_returns[:self.n_assets]
-                logger.info(f"Using first {self.n_assets} features for signal generation")
+            # Use consistent asset extraction
+            latest_returns = self._extract_returns_for_assets(returns)
             
             # Convert returns to binary states (-1 or 1)
             state = np.sign(latest_returns)
             
-            # Calculate energy of current state
+            # Calculate energy of current state - ensure it returns a scalar
             energy = self.calculate_energy(state)
             
             # Generate signal based on energy and regime metrics
             signal = np.zeros_like(state)
             
-            # Strong negative energy indicates potential reversal
-            if energy < -0.5:
+            # Use scalar comparisons for energy
+            if float(energy) < -0.5:  # Strong negative energy indicates potential reversal
                 signal = -state
-            # Strong positive energy indicates trend continuation
-            elif energy > 0.5:
+            elif float(energy) > 0.5:  # Strong positive energy indicates trend continuation
                 signal = state
-            # Otherwise, use regime metrics to determine signal
-            else:
+            else:  # Otherwise, use regime metrics to determine signal
                 if regime['volatility'] > 0.02:  # High volatility
                     signal = -state  # Mean reversion
                 elif regime['momentum'] > 0.001:  # Strong momentum
                     signal = state  # Trend following
                 else:
                     signal = np.zeros_like(state)  # No clear signal
+            
+            # Ensure signal is returned as a scalar for single asset case
+            if self.n_assets == 1:
+                # Handle various signal types more robustly
+                if isinstance(signal, np.ndarray):
+                    if signal.size == 1:
+                        signal_val = float(signal.item())
+                    elif signal.size > 1:
+                        signal_val = float(signal.flatten()[0])
+                    else:
+                        signal_val = 0.0
+                else:
+                    signal_val = float(signal)
+                return np.array([signal_val])
             
             logger.info(f"Generated signal: {signal}")
             return signal

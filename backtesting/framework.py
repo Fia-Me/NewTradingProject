@@ -395,8 +395,8 @@ class BacktestFramework:
         max_drawdown = drawdowns.min()
         
         # Calculate trade statistics
-        num_trades = len([t for t in self.trades if t['type'] == 'close'])
-        winning_trades = len([t for t in self.trades if t['type'] == 'close' and t.get('pnl', 0) > 0])
+        num_trades = len([t for t in self.trades if 'exit_date' in t])  # Count completed trades
+        winning_trades = len([t for t in self.trades if 'exit_date' in t and t.get('pnl', 0) > 0])
         win_rate = winning_trades / num_trades if num_trades > 0 else 0
         
         return {
@@ -408,6 +408,72 @@ class BacktestFramework:
             'trades': self.trades,
             'daily_performance': self.daily_performance
         }
+        
+    def _calculate_volatility(self) -> float:
+        """Calculate current volatility for risk management."""
+        try:
+            if len(self.daily_performance) < 20:
+                return 0.01  # Default volatility
+            
+            # Get recent returns
+            recent_returns = [p['return'] for p in self.daily_performance[-20:]]
+            return float(np.std(recent_returns)) if len(recent_returns) > 0 else 0.01
+        except Exception:
+            return 0.01  # Default volatility on error
+
+    def _calculate_rsi(self) -> float:
+        """Calculate current RSI for risk management."""
+        try:
+            if len(self.daily_performance) < 14:
+                return 50.0  # Neutral RSI
+            
+            # Get recent portfolio values
+            recent_values = [p['portfolio_value'] for p in self.daily_performance[-15:]]
+            if len(recent_values) < 2:
+                return 50.0
+            
+            # Calculate price changes
+            deltas = np.diff(recent_values)
+            gains = np.where(deltas > 0, deltas, 0)
+            losses = np.where(deltas < 0, -deltas, 0)
+            
+            # Calculate average gains and losses
+            avg_gain = np.mean(gains[-14:]) if len(gains) >= 14 else np.mean(gains)
+            avg_loss = np.mean(losses[-14:]) if len(losses) >= 14 else np.mean(losses)
+            
+            if avg_loss == 0:
+                return 100.0
+            
+            rs = avg_gain / avg_loss
+            rsi = 100 - (100 / (1 + rs))
+            return float(rsi)
+        except Exception:
+            return 50.0  # Neutral RSI on error
+
+    def _calculate_adx(self) -> float:
+        """Calculate current ADX for risk management."""
+        try:
+            if len(self.daily_performance) < 14:
+                return 25.0  # Default ADX
+            
+            # Get recent portfolio values as proxy for price
+            recent_values = [p['portfolio_value'] for p in self.daily_performance[-15:]]
+            if len(recent_values) < 3:
+                return 25.0
+            
+            # Simple trend strength calculation
+            values = np.array(recent_values)
+            trend = np.polyfit(range(len(values)), values, 1)[0]
+            volatility = np.std(np.diff(values))
+            
+            # Normalize trend strength (simplified ADX approximation)
+            if volatility == 0:
+                return 25.0
+            
+            adx = min(100, abs(trend) / volatility * 10)
+            return float(adx)
+        except Exception:
+            return 25.0  # Default ADX on error
         
     def plot_results(self) -> None:
         """Plot backtest results with trade markers."""

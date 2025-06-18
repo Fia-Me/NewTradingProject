@@ -47,17 +47,17 @@ def main():
         logger.info(f"Collected data for {symbol}")
         logger.info(f"Data columns: {data.columns.tolist()}")
 
-        # Define required features
+        # Define required features (updated with new optimized features)
         required_features = [
             'open', 'high', 'low', 'close', 'volume',
             'returns', 'volatility', 'rsi', 'macd', 'macd_signal',
             'bb_upper', 'bb_middle', 'bb_lower', 'atr', 'obv',
-            'vwap', 'momentum', 'roc', 'williams_r', 'cci',
-            'stoch_k', 'stoch_d', 'adx', 'mfi', 'trix',
-            'aroon_up', 'aroon_down', 'ppo', 'roc_ma', 'mfi_ma',
-            'rsi_ma', 'macd_ma', 'bb_width', 'bb_pct', 'atr_ratio',
-            'volume_ma', 'price_ma', 'volatility_ma', 'momentum_ma',
-            'returns_ma', 'vwap_ma'
+            'vwap', 'momentum', 'adx',
+            # New optimized features for better signal generation
+            'price_to_ma5', 'price_to_ma20', 'price_to_ma50',
+            'volume_ma', 'volume_ratio',
+            'price_momentum_5', 'price_momentum_10',
+            'volatility_ratio', 'returns_ma', 'volatility_ma'
         ]
 
         # Engineer features with configuration

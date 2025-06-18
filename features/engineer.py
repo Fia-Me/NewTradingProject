@@ -210,6 +210,23 @@ class FeatureEngineer:
         # Calculate VWAP
         features['vwap'] = (df['volume'] * (df['high'] + df['low'] + df['close']) / 3).cumsum() / df['volume'].cumsum()
         
+        # Calculate price relative to moving averages (important signals)
+        features['price_to_ma5'] = df['close'] / df['close'].rolling(window=5).mean()
+        features['price_to_ma20'] = df['close'] / df['close'].rolling(window=20).mean()
+        features['price_to_ma50'] = df['close'] / df['close'].rolling(window=50).mean()
+        
+        # Calculate volume indicators (important for signal confirmation)
+        volume_ma_20 = df['volume'].rolling(window=20).mean()
+        features['volume_ma'] = volume_ma_20
+        features['volume_ratio'] = df['volume'] / volume_ma_20
+        
+        # Calculate momentum indicators
+        features['price_momentum_5'] = df['close'].pct_change(5)
+        features['price_momentum_10'] = df['close'].pct_change(10)
+        
+        # Calculate volatility indicators
+        features['volatility_ratio'] = features['volatility'] / features['volatility'].rolling(window=50).mean()
+        
         # Fill NaN values with 0
         features = features.fillna(0)
         
