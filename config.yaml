@@ -91,14 +91,14 @@ model:
       window_size: 20
       regime_threshold: 0.5
       signal_weights:
-        ensemble: 0.7
-        ising: 0.3
+        ensemble: 0.8
+        ising: 0.2
       regime_weights:
-        volatility: 0.15
-        rsi: 0.15
-        macd: 0.15
+        volatility: 0.30
+        rsi: 0.25
+        macd: 0.20
         momentum: 0.15
-        adx: 0.15
+        adx: 0.10
         regime: 0.15
         temperature: 0.10
 
@@ -107,27 +107,27 @@ strategy:
   renaissance:
     lookback_period: 252  # 1 year
     prediction_horizon: 5  # 5 days
-    signal_threshold: 0.005  # 0.5% threshold (reduced from 2%)
-    position_size_limit: 0.15  # 15% of portfolio (increased from 2%)
+    signal_threshold: 0.002  # 0.2% threshold (reduced from 0.5% for more signals)
+    position_size_limit: 0.10  # 10% of portfolio (reduced from 15% for better risk management)
     min_holding_period: 1  # Minimum days to hold position
-    max_holding_period: 10  # Maximum days to hold position (reduced from 20)
+    max_holding_period: 7  # Maximum days to hold position (reduced from 10 for faster turnover)
     rebalance_frequency: "1d"  # Daily rebalancing
 
 # Risk Management Parameters
 risk_management:
   position_limits:
-    max_position_size: 0.15  # 15% of portfolio (increased from 5%)
-    max_sector_exposure: 0.30  # 30% per sector (increased from 20%)
-    max_leverage: 1.5  # 150% leverage
+    max_position_size: 0.10  # 10% of portfolio (reduced for better diversification)
+    max_sector_exposure: 0.25  # 25% per sector (reduced from 30%)
+    max_leverage: 1.3  # 130% leverage (reduced from 150% for safety)
   
   risk_limits:
-    max_daily_loss: 0.02  # 2% daily loss limit
-    max_drawdown: 0.15  # 15% maximum drawdown
+    max_daily_loss: 0.015  # 1.5% daily loss limit (reduced from 2%)
+    max_drawdown: 0.12  # 12% maximum drawdown (reduced from 15%)
     var_confidence: 0.99  # 99% VaR confidence level
     var_window: 252  # 1 year for VaR calculation
   
   correlation:
-    max_correlation: 0.7  # Maximum correlation between positions
+    max_correlation: 0.65  # Maximum correlation between positions (reduced from 0.7)
     correlation_window: 60  # 60 days for correlation calculation
 
 # Backtesting Parameters

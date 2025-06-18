@@ -228,11 +228,11 @@ class EnsembleModel:
         # Initialize feature scaler
         self.feature_scaler = StandardScaler()
         
-        # Initialize model weights (equal weights initially)
+        # Initialize model weights (optimized for better performance)
         self.model_weights = {
-            'lstm': 0.33,
-            'transformer': 0.33,
-            'xgboost': 0.34
+            'lstm': 0.25,      # Reduced weight - LSTM can overfit on small datasets
+            'transformer': 0.35, # Increased weight - Transformers good at pattern recognition
+            'xgboost': 0.40     # Increased weight - XGBoost robust and handles features well
         }
         
         # Initialize models
@@ -427,21 +427,17 @@ class EnsembleModel:
         
         # Train XGBoost model
         self.logger.info("Training XGBoost model...")
-        # Prepare flat features
-        X_flat = self._prepare_flat_features(X)
-        # Generate meta features
-        X_meta = self._generate_meta_features(X)
-        # Combine features
-        X_combined = np.hstack([X_flat, X_meta])
+        # Use consistent feature preparation for XGBoost
+        X_xgboost = self._prepare_xgboost_features(X)
         # Adjust target for sequence length
         y_xgb = y[self.sequence_length-1:]
         # Ensure features and target have same length
-        min_length = min(len(X_combined), len(y_xgb))
-        X_combined = X_combined[:min_length]
+        min_length = min(len(X_xgboost), len(y_xgb))
+        X_xgboost = X_xgboost[:min_length]
         y_xgb = y_xgb[:min_length]
         
-        self.logger.info(f"XGBoost training data shapes - X: {X_combined.shape}, y: {y_xgb.shape}")
-        self.xgboost.fit(X_combined, y_xgb)
+        self.logger.info(f"XGBoost training data shapes - X: {X_xgboost.shape}, y: {y_xgb.shape}")
+        self.xgboost.fit(X_xgboost, y_xgb)
         
         self.logger.info("Model training completed")
         
@@ -518,16 +514,34 @@ class EnsembleModel:
             n_features = X.shape[1] * X.shape[2] if len(X.shape) == 3 else X.shape[1]
             X_flat = X.reshape(n_samples, n_features)
             
-            # Add meta-features
-            X_meta = self._generate_meta_features(X_flat)
-            
-            self.logger.info(f"Prepared flat features shape: {X_meta.shape}")
-            return X_meta
+            # Return the flattened features directly - don't generate meta features here
+            # as they will be generated separately and combined
+            self.logger.info(f"Prepared flat features shape: {X_flat.shape}")
+            return X_flat
             
         except Exception as e:
             self.logger.error(f"Error preparing flat features: {str(e)}")
             self.logger.error(traceback.format_exc())
             raise
+
+    def _prepare_xgboost_features(self, X: np.ndarray) -> np.ndarray:
+        """Prepare consistent features for XGBoost training and prediction."""
+        try:
+            # Generate both flat features and meta features consistently
+            X_flat = self._prepare_flat_features(X)
+            X_meta = self._generate_meta_features(X)
+            
+            # Combine features - this ensures consistent dimensionality
+            X_combined = np.hstack([X_flat, X_meta])
+            
+            self.logger.info(f"Prepared XGBoost features shape: {X_combined.shape}")
+            return X_combined
+            
+        except Exception as e:
+            self.logger.error(f"Error preparing XGBoost features: {str(e)}")
+            self.logger.error(traceback.format_exc())
+            # Return a safe fallback
+            return np.zeros((X.shape[0], X.shape[1] + 7))  # flat + 7 meta features
         
     def _generate_meta_features(self, X: np.ndarray) -> np.ndarray:
         """Generate meta-features from input data."""
@@ -572,23 +586,30 @@ class EnsembleModel:
             Array of sequence features with shape (n_samples, sequence_length, input_size)
         """
         try:
-            # Ensure input is 2D
+            # Convert to numpy array if it's a pandas DataFrame
+            if isinstance(X, pd.DataFrame):
+                X = X.values
+            
+            # Ensure input is 2D and get flat features only (not XGBoost features)
             if len(X.shape) == 3:
                 n_samples, seq_len, n_features = X.shape
-                X = X.reshape(n_samples * seq_len, n_features)
+                X_flat = X.reshape(n_samples * seq_len, n_features)
+            else:
+                X_flat = X.copy()
             
-            # Initialize scaler if not exists
+            # Initialize scaler if not exists - use only flat features for consistency
             if self.feature_scaler is None:
                 from sklearn.preprocessing import StandardScaler
                 self.feature_scaler = StandardScaler()
-                self.feature_scaler.fit(X)
+                self.feature_scaler.fit(X_flat)
+                self.logger.info(f"Fitted feature scaler on {X_flat.shape[1]} features")
             
-            # Scale features
-            X_scaled = self.feature_scaler.transform(X)
+            # Scale features using flat features only
+            X_scaled = self.feature_scaler.transform(X_flat)
             
-            # Reshape back to 3D if needed
+            # Reshape back to original shape if needed
             if len(X.shape) == 3:
-                X_scaled = X_scaled.reshape(n_samples, seq_len, n_features)
+                X_scaled = X_scaled.reshape(X.shape)
             
             # Create sequences using rolling window
             sequences = []
@@ -603,13 +624,13 @@ class EnsembleModel:
             
             # Convert to numpy array and ensure correct shape
             sequences = np.array(sequences)
-            logger.info(f"Prepared sequence features shape: {sequences.shape}")
+            self.logger.info(f"Prepared sequence features shape: {sequences.shape}")
             
             return sequences
             
         except Exception as e:
-            logger.error(f"Error preparing sequence features: {str(e)}")
-            logger.error(traceback.format_exc())
+            self.logger.error(f"Error preparing sequence features: {str(e)}")
+            self.logger.error(traceback.format_exc())
             raise
         
     def evaluate(
@@ -620,26 +641,25 @@ class EnsembleModel:
         """Evaluate model performance."""
         self.logger.info("Evaluating model performance...")
         
-        # Prepare features for each model
+        # Prepare sequence features
         X_seq = self._prepare_sequence_features(X)
-        X_flat = self._prepare_flat_features(X)
-        X_meta = self._generate_meta_features(X)
+        self.logger.info(f"Prepared sequence features shape: {X_seq.shape}")
         
-        # Combine features for XGBoost
-        X_combined = np.hstack([X_flat, X_meta])
+        # Use consistent XGBoost feature preparation
+        X_xgboost = self._prepare_xgboost_features(X)
         
         # Adjust target for sequence length
         y_adjusted = y[self.sequence_length-1:]
         
         # Ensure features and target have same length
-        min_length = min(len(X_combined), len(y_adjusted))
-        X_combined = X_combined[:min_length]
+        min_length = min(len(X_xgboost), len(y_adjusted))
+        X_xgboost = X_xgboost[:min_length]
         y_adjusted = y_adjusted[:min_length]
         
         # Validate data
-        if np.isnan(X_combined).any() or np.isinf(X_combined).any():
+        if np.isnan(X_xgboost).any() or np.isinf(X_xgboost).any():
             self.logger.warning("Features contain NaN or inf values, replacing with 0")
-            X_combined = np.nan_to_num(X_combined, nan=0.0, posinf=0.0, neginf=0.0)
+            X_xgboost = np.nan_to_num(X_xgboost, nan=0.0, posinf=0.0, neginf=0.0)
             
         if np.isnan(y_adjusted).any() or np.isinf(y_adjusted).any():
             self.logger.warning("Target contains NaN or inf values, replacing with 0")
@@ -648,7 +668,7 @@ class EnsembleModel:
         # Get predictions from each model
         lstm_pred = self.lstm.predict(torch.FloatTensor(X_seq).to(self.device))
         transformer_pred = self.transformer.predict(torch.FloatTensor(X_seq).to(self.device))
-        xgb_pred = self.xgboost.predict(X_combined)
+        xgb_pred = self.xgboost.predict(X_xgboost)
         
         # Convert predictions to numpy arrays and ensure correct shape
         lstm_pred = lstm_pred.cpu().numpy().reshape(-1, 1)
@@ -760,8 +780,8 @@ class EnsembleModel:
             self.logger.info(f"Generating signals with input data shape: {data.shape}")
             self.logger.info(f"Input data columns: {data.columns.tolist()}")
             
-            # Prepare features
-            X = self._prepare_flat_features(data.values)
+            # Prepare features - use original data for predictions, not XGBoost features
+            X = data.values
             self.logger.info(f"Prepared features shape: {X.shape}")
             
             # Get ensemble prediction
@@ -784,13 +804,23 @@ class EnsembleModel:
                 self.logger.error(traceback.format_exc())
                 ising_pred = np.zeros(len(data))
             
-            # Combine predictions using configurable weights. Use .get to avoid KeyErrors.
+            # Ensure both predictions are scalars or arrays of same length
+            if isinstance(ensemble_pred, np.ndarray) and len(ensemble_pred) > 0:
+                ensemble_pred = float(ensemble_pred[-1])  # Take last prediction
+            else:
+                ensemble_pred = 0.0
+                
+            if isinstance(ising_pred, np.ndarray) and len(ising_pred) > 0:
+                ising_pred = float(ising_pred[-1])  # Take last prediction  
+            else:
+                ising_pred = 0.0
+            
+            # Combine predictions using configurable weights
             combined_pred = (
-                self.signal_weights.get('ensemble', 0.5) * ensemble_pred +
-                self.signal_weights.get('ising', 0.5) * ising_pred
+                self.signal_weights.get('ensemble', 0.8) * ensemble_pred +
+                self.signal_weights.get('ising', 0.2) * ising_pred
             )
-            self.logger.info(f"Combined prediction shape: {combined_pred.shape}")
-            self.logger.info(f"Combined prediction values: {combined_pred}")
+            self.logger.info(f"Combined prediction: {combined_pred}")
             
             # Calculate market factors
             try:
@@ -807,17 +837,11 @@ class EnsembleModel:
             self.logger.info(f"Base threshold: {base_threshold}")
             self.logger.info(f"Final threshold: {final_threshold}")
             
-            # Convert latest prediction to a scalar for safe comparison
-            try:
-                latest_pred = float(np.squeeze(combined_pred[-1]))
-            except Exception:
-                self.logger.warning("Could not convert latest combined prediction to float – defaulting to 0.0")
-                latest_pred = 0.0
-
+            # Generate signal
             signal = 0
-            if latest_pred > final_threshold:
+            if combined_pred > final_threshold:
                 signal = 1
-            elif latest_pred < -final_threshold:
+            elif combined_pred < -final_threshold:
                 signal = -1
                 
             self.logger.info(f"Generated signal: {signal}")
@@ -837,25 +861,45 @@ class EnsembleModel:
             if isinstance(X, pd.DataFrame):
                 X = X.values
             
-            # Prepare sequence features
-            X_seq = self._prepare_sequence_features(X)
+            # For sequence models, use flat features only (not XGBoost features)
+            X_flat = self._prepare_flat_features(X)
+            X_seq = self._prepare_sequence_features(X_flat)
             self.logger.info(f"Prepared sequence features shape: {X_seq.shape}")
             
-            # Generate meta-features
-            X_meta = self._generate_meta_features(X)
+            # For XGBoost, use the combined features  
+            X_xgboost = self._prepare_xgboost_features(X)
+            self.logger.info(f"Prepared XGBoost features shape: {X_xgboost.shape}")
             
             # Make predictions with each model
             lstm_pred = self.lstm.predict(torch.FloatTensor(X_seq).to(self.device))
             transformer_pred = self.transformer.predict(torch.FloatTensor(X_seq).to(self.device))
-            xgb_pred = self.xgboost.predict(X_meta)
+            xgb_pred = self.xgboost.predict(X_xgboost)
             
-            # Combine predictions
+            # Convert predictions to numpy arrays
+            if hasattr(lstm_pred, 'cpu'):
+                lstm_pred = lstm_pred.cpu().numpy()
+            if hasattr(transformer_pred, 'cpu'):
+                transformer_pred = transformer_pred.cpu().numpy()
+            
+            # Ensure all predictions have the same shape
+            lstm_pred = np.array(lstm_pred).flatten()
+            transformer_pred = np.array(transformer_pred).flatten()
+            xgb_pred = np.array(xgb_pred).flatten()
+            
+            # Take the minimum length to ensure compatibility
+            min_len = min(len(lstm_pred), len(transformer_pred), len(xgb_pred))
+            lstm_pred = lstm_pred[:min_len]
+            transformer_pred = transformer_pred[:min_len]
+            xgb_pred = xgb_pred[:min_len]
+            
+            # Combine predictions using model weights
             ensemble_pred = (
                 self.model_weights['lstm'] * lstm_pred +
                 self.model_weights['transformer'] * transformer_pred +
                 self.model_weights['xgboost'] * xgb_pred
             )
             
+            self.logger.info(f"Ensemble prediction shape: {ensemble_pred.shape}")
             return ensemble_pred
             
         except Exception as e:
@@ -866,43 +910,87 @@ class EnsembleModel:
     def _calculate_market_factors(self, data: pd.DataFrame) -> float:
         """Calculate market factors that affect signal thresholds."""
         try:
-            # Calculate volatility
-            returns = data['returns'] if 'returns' in data.columns else data['close'].pct_change()
-            volatility = returns.std()
+            # Helper function for robust scalar conversion
+            def to_scalar(val):
+                if isinstance(val, (pd.Series, np.ndarray)):
+                    if len(val) == 1:
+                        return float(val.item() if hasattr(val, 'item') else val[0])
+                    elif len(val) > 1:
+                        self.logger.warning(f"Expected scalar, got multiple values. Using mean: {np.mean(val):.4f}")
+                        return float(np.mean(val))
+                    else:
+                        self.logger.warning("Empty Series/array encountered, returning 0.")
+                        return 0.0
+                elif pd.isna(val):
+                    self.logger.warning("NaN value encountered, returning 0.")
+                    return 0.0
+                return float(val)
             
-            # Calculate trend strength using ADX
-            adx = data['adx'].iloc[-1] if 'adx' in data.columns else 0
+            # Calculate volatility with robust conversion
+            if 'returns' in data.columns:
+                returns_col = data['returns']
+            else:
+                returns_col = data['close'].pct_change()
             
-            # Calculate momentum using RSI
-            rsi = data['rsi'].iloc[-1] if 'rsi' in data.columns else 50
+            # Handle Series/DataFrame volatility calculation
+            if isinstance(returns_col, pd.Series):
+                volatility_raw = returns_col.std()
+            else:
+                volatility_raw = returns_col.std().iloc[0] if len(returns_col.std()) > 0 else 0
+            volatility = to_scalar(volatility_raw)
             
-            # Calculate market regime
-            regime = 1.0
+            # Calculate trend strength using ADX with robust conversion
+            if 'adx' in data.columns:
+                adx_raw = data['adx'].iloc[-1]
+                adx = to_scalar(adx_raw)
+            else:
+                adx = 0.0
+            
+            # Calculate momentum using RSI with robust conversion
+            if 'rsi' in data.columns:
+                rsi_raw = data['rsi'].iloc[-1]
+                rsi = to_scalar(rsi_raw)
+            else:
+                rsi = 50.0
+            
+            # Calculate market regime with robust conversion
             if 'regime' in data.columns:
-                regime = data['regime'].iloc[-1]
+                regime_raw = data['regime'].iloc[-1]
+                regime = to_scalar(regime_raw)
+            else:
+                regime = 1.0
             
-            # Combine factors
+            # Ensure all values are valid floats
+            volatility = max(0.0, min(1.0, volatility))  # Clamp between 0 and 1
+            adx = max(0.0, min(100.0, adx))  # ADX is typically 0-100
+            rsi = max(0.0, min(100.0, rsi))  # RSI is 0-100
+            regime = max(0.0, regime)  # Regime should be positive
+            
+            # Combine factors with safe calculations
             volatility_factor = 1.0 / (1.0 + volatility)  # Reduce signals in high volatility
             trend_factor = adx / 100.0 if adx > 0 else 0.5  # Reduce signals in weak trends
             momentum_factor = 1.0 - abs(rsi - 50) / 50.0  # Reduce signals in extreme RSI
-            regime_factor = regime if isinstance(regime, (int, float)) else 1.0
+            regime_factor = min(2.0, regime)  # Cap regime factor to avoid extreme values
             
-            # Calculate final factor
+            # Calculate final factor using robust weights
             market_factor = (
-                self.regime_weights['volatility'] * volatility_factor +
-                self.regime_weights['trend'] * trend_factor +
-                self.regime_weights['momentum'] * momentum_factor +
-                self.regime_weights['regime'] * regime_factor
+                self.regime_weights.get('volatility', 0.25) * volatility_factor +
+                self.regime_weights.get('trend', 0.25) * trend_factor +
+                self.regime_weights.get('momentum', 0.25) * momentum_factor +
+                self.regime_weights.get('regime', 0.25) * regime_factor
             )
             
+            # Ensure market factor is in reasonable range
+            market_factor = max(0.1, min(2.0, market_factor))
+            
             self.logger.info(f"Market factors calculation:")
-            self.logger.info(f"  Volatility: {volatility:.4f}")
-            self.logger.info(f"  ADX: {adx:.2f}")
-            self.logger.info(f"  RSI: {rsi:.2f}")
-            self.logger.info(f"  Regime: {regime}")
+            self.logger.info(f"  Volatility: {volatility:.4f} -> factor: {volatility_factor:.4f}")
+            self.logger.info(f"  ADX: {adx:.2f} -> factor: {trend_factor:.4f}")
+            self.logger.info(f"  RSI: {rsi:.2f} -> factor: {momentum_factor:.4f}")
+            self.logger.info(f"  Regime: {regime:.4f} -> factor: {regime_factor:.4f}")
             self.logger.info(f"  Final market factor: {market_factor:.4f}")
             
-            return market_factor
+            return float(market_factor)
             
         except Exception as e:
             self.logger.error(f"Error calculating market factors: {str(e)}")
